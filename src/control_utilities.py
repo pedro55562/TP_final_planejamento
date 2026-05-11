@@ -16,9 +16,19 @@ This makes it usable in:
 
 Main usage
 ----------
-    controller = UAIbotTaskController(robot, htm_d=htm_d)
+For a constant desired pose:
 
-    u, r, Jr, Fr = controller.compute_control(q)
+    controller = UAIbotTaskController(robot, htm_d=htm_d)
+    u, r, Jr, Fr, rt = controller.compute_control(q=q)
+
+For a time-varying desired pose htm_d(t):
+
+    controller = UAIbotTaskController(
+        robot,
+        htm_d=htm_d,
+        time_derivative_mode="numeric",
+    )
+    u, r, Jr, Fr, rt = controller.compute_control(q=q, t=t)
 
 Conventions
 -----------
@@ -43,24 +53,27 @@ this default end-effector pose task:
         [ 1 - y_d.T * y_e           ]
         [ 1 - z_d.T * z_e           ]
 
+The desired pose can be:
+
+    htm_d           # constant pose
+    htm_d(t)        # time-varying pose
+
+For time-varying tasks, the controller uses:
+
+    Jr(q,t) u = F(r) - partial r / partial t
+
+Therefore:
+
+    u = Jr(q,t)^+ * (F(r) - rt)
+
 where:
-    s_e is the current end-effector position,
-    s_d is the desired end-effector position,
-    x_e, y_e, z_e are the current end-effector axes,
-    x_d, y_d, z_d are the desired end-effector axes.
 
-The controller enforces the first-order task dynamics:
-
-    rdot = F(r)
-
-through:
-
-    Jr(q) * qdot = F(r)
-    qdot = Jr(q)^+ * F(r)
+    rt = partial r / partial t
 """
 
 import numpy as np
 import uaibot as ub
+
 
 class UAIbotTaskController:
     """
@@ -71,10 +84,13 @@ class UAIbotTaskController:
 
     It implements:
 
-        r = task_function(robot, q, Jg, fk, **task_args)
-        Jr = task_jacobian(robot, q, Jg, fk, **task_args)
+        r  = task_function(robot, q, Jg, fk, t, **task_args)
+        Jr = task_jacobian(robot, q, Jg, fk, t, **task_args)
         Fr = F(r, **F_args)
-        u = ub.Utils.dp_inv(Jr, damping) * Fr
+        rt = partial r / partial t
+        u  = ub.Utils.dp_inv(Jr, damping) * (Fr - rt)
+
+    For static tasks, rt = 0.
 
     By default, it uses:
 
@@ -97,8 +113,12 @@ class UAIbotTaskController:
         F_args=None,
         task_function=None,
         task_jacobian=None,
+        task_time_derivative=None,
         task_args=None,
         damping=1e-3,
+        time_derivative_mode="none",
+        time_derivative_eps=1e-4,
+        numeric_time_derivative_method="five_point_forward",
     ):
         """
         Create a task-space controller.
@@ -109,8 +129,13 @@ class UAIbotTaskController:
             UAIbot robot object. The controller uses it to compute forward
             kinematics and the geometric Jacobian.
 
-        htm_d : None or array-like, shape (4, 4)
+        htm_d : None, array-like, or callable
             Desired end-effector pose for the default pose task.
+
+            It can be:
+
+                htm_d        : constant 4x4 homogeneous transformation
+                htm_d(t)     : callable returning a 4x4 homogeneous transformation
 
             If a custom task is used, this argument is optional.
 
@@ -126,20 +151,12 @@ class UAIbotTaskController:
         F_args : None or dict
             Extra keyword arguments passed to F.
 
-            Example:
-
-                F_args={"gain": 2.0}
-
-            This calls:
-
-                F_linear(r, gain=2.0)
-
         task_function : None or callable
             Function that computes the task value r.
 
             Expected signature:
 
-                task_function(robot, q, Jg, fk, **task_args) -> r
+                task_function(robot, q, Jg, fk, t, **task_args) -> r
 
             If None, the default pose task is used.
 
@@ -148,28 +165,60 @@ class UAIbotTaskController:
 
             Expected signature:
 
-                task_jacobian(robot, q, Jg, fk, **task_args) -> Jr
+                task_jacobian(robot, q, Jg, fk, t, **task_args) -> Jr
 
             If None, the default pose task Jacobian is used.
 
+        task_time_derivative : None or callable
+            Function that computes the partial time derivative of the task.
+
+            Expected signature:
+
+                task_time_derivative(robot, q, Jg, fk, t, **task_args) -> rt
+
+            It is required only when time_derivative_mode="analytic".
+
         task_args : None or dict
-            Extra keyword arguments passed to task_function and task_jacobian.
-
-            Example:
-
-                task_args={"htm_d": htm_d}
+            Extra keyword arguments passed to task_function, task_jacobian and
+            task_time_derivative.
 
             For the default pose task, htm_d is inserted automatically.
 
         damping : float
             Damping parameter used by ub.Utils.dp_inv.
+
+        time_derivative_mode : str
+            How to compute partial r / partial t. Options:
+
+                "none"      : static task, rt = 0
+                "analytic"  : user provides task_time_derivative
+                "numeric"   : controller estimates rt numerically
+
+        time_derivative_eps : float
+            Step size used for numerical time differentiation.
+
+        numeric_time_derivative_method : str
+            Numerical differentiation method. Currently supported:
+
+                "five_point_forward"
+
+            This is a fourth-order one-sided formula:
+
+                f'(t) ≈ (-25 f(t) + 48 f(t+h) - 36 f(t+2h)
+                         + 16 f(t+3h) - 3 f(t+4h)) / (12 h)
+
+            It is more accurate than the simple first-order forward difference
+            and does not use the basic two-point central difference formula.
         """
 
         self.robot = robot
 
         self.htm_d = None
         if htm_d is not None:
-            self.htm_d = self.as_htm(htm_d, name="htm_d")
+            if callable(htm_d):
+                self.htm_d = htm_d
+            else:
+                self.htm_d = self.as_htm(htm_d, name="htm_d")
 
         self.F = F if F is not None else self.F_linear
         self.F_args = {} if F_args is None else dict(F_args)
@@ -186,6 +235,7 @@ class UAIbotTaskController:
             else self.default_pose_task_jacobian
         )
 
+        self.task_time_derivative = task_time_derivative
         self.task_args = {} if task_args is None else dict(task_args)
 
         # If htm_d was passed directly to the constructor, insert it into
@@ -196,11 +246,24 @@ class UAIbotTaskController:
 
         self.damping = float(damping)
 
+        valid_modes = {"none", "analytic", "numeric"}
+        if time_derivative_mode not in valid_modes:
+            raise ValueError(
+                "time_derivative_mode must be 'none', 'analytic', or 'numeric'."
+            )
+
+        self.time_derivative_mode = time_derivative_mode
+        self.time_derivative_eps = float(time_derivative_eps)
+        self.numeric_time_derivative_method = numeric_time_derivative_method
+
+        if self.time_derivative_eps <= 0.0:
+            raise ValueError("time_derivative_eps must be positive.")
+
     # =========================================================================
     # Public control method
     # =========================================================================
 
-    def compute_control(self, q=None):
+    def compute_control(self, q=None, t=None):
         """
         Compute one control action for the current robot state.
 
@@ -214,8 +277,13 @@ class UAIbotTaskController:
 
             If None, self.robot.q is used.
 
-            In a real robot or ROS loop, q should usually come from sensors.
-            In a UAIbot simulation, q can be self.robot.q.
+        t : None or float
+            Current time.
+
+            It is required when the task depends explicitly on time, i.e. when:
+
+                time_derivative_mode="analytic"
+                time_derivative_mode="numeric"
 
         Returns
         -------
@@ -230,6 +298,9 @@ class UAIbotTaskController:
 
         Fr : np.matrix, shape (m, 1)
             Desired task derivative F(r).
+
+        rt : np.matrix, shape (m, 1)
+            Partial time derivative of the task, partial r / partial t.
         """
 
         if q is None:
@@ -241,27 +312,8 @@ class UAIbotTaskController:
         Jg = np.matrix(Jg, dtype=float)
         fk = self.as_htm(fk, name="fk")
 
-        r = self.as_col(
-            self.task_function(
-                self.robot,
-                q,
-                Jg,
-                fk,
-                **self.task_args,
-            ),
-            name="r",
-        )
-
-        Jr = np.matrix(
-            self.task_jacobian(
-                self.robot,
-                q,
-                Jg,
-                fk,
-                **self.task_args,
-            ),
-            dtype=float,
-        )
+        r = self.evaluate_task_function(q=q, Jg=Jg, fk=fk, t=t)
+        Jr = self.evaluate_task_jacobian(q=q, Jg=Jg, fk=fk, t=t)
 
         if Jr.shape[0] != r.shape[0]:
             raise ValueError(
@@ -276,10 +328,208 @@ class UAIbotTaskController:
             )
 
         Fr = self.evaluate_task_dynamics(self.F, r, self.F_args)
+        rt = self.compute_task_time_derivative(q=q, Jg=Jg, fk=fk, t=t, r=r)
 
-        u = ub.Utils.dp_inv(Jr, self.damping) * Fr
+        u = ub.Utils.dp_inv(Jr, self.damping) * (Fr - rt)
 
-        return u, r, Jr, Fr
+        return u, r, Jr, Fr, rt
+
+    # =========================================================================
+    # Evaluation helpers
+    # =========================================================================
+
+    def evaluate_task_function(self, q, Jg, fk, t):
+        """
+        Evaluate the configured task function.
+
+        Parameters
+        ----------
+        q : np.matrix, shape (n, 1)
+            Current joint configuration.
+
+        Jg : np.matrix, shape (6, n)
+            Geometric Jacobian.
+
+        fk : np.matrix, shape (4, 4)
+            Current end-effector pose.
+
+        t : None or float
+            Current time.
+
+        Returns
+        -------
+        r : np.matrix, shape (m, 1)
+            Task value.
+        """
+
+        r = self.task_function(
+            self.robot,
+            q,
+            Jg,
+            fk,
+            t,
+            **self.task_args,
+        )
+
+        return self.as_col(r, name="r")
+
+    def evaluate_task_jacobian(self, q, Jg, fk, t):
+        """
+        Evaluate the configured task Jacobian.
+
+        Parameters
+        ----------
+        q : np.matrix, shape (n, 1)
+            Current joint configuration.
+
+        Jg : np.matrix, shape (6, n)
+            Geometric Jacobian.
+
+        fk : np.matrix, shape (4, 4)
+            Current end-effector pose.
+
+        t : None or float
+            Current time.
+
+        Returns
+        -------
+        Jr : np.matrix, shape (m, n)
+            Task Jacobian.
+        """
+
+        Jr = self.task_jacobian(
+            self.robot,
+            q,
+            Jg,
+            fk,
+            t,
+            **self.task_args,
+        )
+
+        return np.matrix(Jr, dtype=float)
+
+    def compute_task_time_derivative(self, q, Jg, fk, t, r):
+        """
+        Compute the partial time derivative of the task.
+
+        The returned value is:
+
+            rt = partial r / partial t
+
+        Parameters
+        ----------
+        q : np.matrix, shape (n, 1)
+            Current joint configuration.
+
+        Jg : np.matrix, shape (6, n)
+            Geometric Jacobian at q.
+
+        fk : np.matrix, shape (4, 4)
+            Forward kinematics at q.
+
+        t : None or float
+            Current time.
+
+        r : np.matrix, shape (m, 1)
+            Current task value.
+
+        Returns
+        -------
+        rt : np.matrix, shape (m, 1)
+            Partial time derivative of the task.
+        """
+
+        if self.time_derivative_mode == "none":
+            return np.matrix(np.zeros(r.shape))
+
+        if t is None:
+            raise ValueError(
+                "t must be provided when time_derivative_mode is not 'none'."
+            )
+
+        if self.time_derivative_mode == "analytic":
+            if self.task_time_derivative is None:
+                raise ValueError(
+                    "task_time_derivative must be provided when "
+                    "time_derivative_mode='analytic'."
+                )
+
+            rt = self.task_time_derivative(
+                self.robot,
+                q,
+                Jg,
+                fk,
+                t,
+                **self.task_args,
+            )
+
+            return self.as_col(rt, r.shape[0], name="rt")
+
+        if self.time_derivative_mode == "numeric":
+            return self.compute_task_time_derivative_numeric(
+                q=q,
+                Jg=Jg,
+                fk=fk,
+                t=t,
+                r=r,
+            )
+
+        raise ValueError(
+            "time_derivative_mode must be 'none', 'analytic', or 'numeric'."
+        )
+
+    def compute_task_time_derivative_numeric(self, q, Jg, fk, t, r):
+        """
+        Numerically estimate partial r / partial t.
+
+        This method keeps q, Jg and fk fixed and only changes the time argument
+        passed to the task function. Therefore it estimates a partial time
+        derivative, not a total derivative.
+
+        The default method is a fourth-order five-point forward formula:
+
+            r_t ≈ (-25 r(t) + 48 r(t+h) - 36 r(t+2h)
+                   + 16 r(t+3h) - 3 r(t+4h)) / (12 h)
+
+        Parameters
+        ----------
+        q : np.matrix, shape (n, 1)
+            Current joint configuration.
+
+        Jg : np.matrix, shape (6, n)
+            Geometric Jacobian at q.
+
+        fk : np.matrix, shape (4, 4)
+            Forward kinematics at q.
+
+        t : float
+            Current time.
+
+        r : np.matrix, shape (m, 1)
+            Current task value r(t).
+
+        Returns
+        -------
+        rt : np.matrix, shape (m, 1)
+            Numerical estimate of partial r / partial t.
+        """
+
+        if self.numeric_time_derivative_method != "five_point_forward":
+            raise ValueError(
+                "numeric_time_derivative_method must be 'five_point_forward'."
+            )
+
+        h = self.time_derivative_eps
+
+        r0 = self.as_col(r, name="r0")
+        r1 = self.evaluate_task_function(q=q, Jg=Jg, fk=fk, t=t + h)
+        r2 = self.evaluate_task_function(q=q, Jg=Jg, fk=fk, t=t + 2.0 * h)
+        r3 = self.evaluate_task_function(q=q, Jg=Jg, fk=fk, t=t + 3.0 * h)
+        r4 = self.evaluate_task_function(q=q, Jg=Jg, fk=fk, t=t + 4.0 * h)
+
+        return (-25.0 * r0 + 48.0 * r1 - 36.0 * r2 + 16.0 * r3 - 3.0 * r4) / (
+            12.0 * h
+        )
 
     # =========================================================================
     # Small helpers
@@ -289,22 +539,6 @@ class UAIbotTaskController:
     def as_col(v, n=None, name="vector"):
         """
         Convert input to a column np.matrix.
-
-        Parameters
-        ----------
-        v : array-like
-            Input vector.
-
-        n : int or None
-            Expected vector dimension. If None, the dimension is not checked.
-
-        name : str
-            Name used in the error message.
-
-        Returns
-        -------
-        v_col : np.matrix
-            Column vector.
         """
 
         v_col = np.matrix(v, dtype=float)
@@ -323,19 +557,6 @@ class UAIbotTaskController:
     def as_htm(H, name="htm"):
         """
         Convert input to a 4x4 homogeneous transformation np.matrix.
-
-        Parameters
-        ----------
-        H : array-like, shape (4, 4)
-            Homogeneous transformation matrix.
-
-        name : str
-            Name used in the error message.
-
-        Returns
-        -------
-        H : np.matrix, shape (4, 4)
-            Homogeneous transformation matrix.
         """
 
         H = np.matrix(H, dtype=float)
@@ -349,16 +570,6 @@ class UAIbotTaskController:
     def scalar(x):
         """
         Convert a 1x1 matrix-like value to float.
-
-        Parameters
-        ----------
-        x : scalar-like
-            Value to convert.
-
-        Returns
-        -------
-        value : float
-            Scalar value.
         """
 
         return float(np.asarray(x).reshape(-1)[0])
@@ -367,22 +578,6 @@ class UAIbotTaskController:
     def evaluate_task_dynamics(cls, F, r, F_args=None):
         """
         Evaluate the task dynamics F(r).
-
-        Parameters
-        ----------
-        F : callable
-            Task dynamics function.
-
-        r : np.matrix, shape (m, 1)
-            Task value.
-
-        F_args : None or dict
-            Optional keyword arguments passed to F.
-
-        Returns
-        -------
-        Fr : np.matrix, shape (m, 1)
-            Desired task derivative.
         """
 
         if F_args is None:
@@ -392,12 +587,39 @@ class UAIbotTaskController:
 
         return cls.as_col(Fr, r.shape[0], name="F(r)")
 
+    @classmethod
+    def evaluate_htm_reference(cls, htm_d, t=None):
+        """
+        Evaluate a constant or time-varying desired pose.
+
+        Parameters
+        ----------
+        htm_d : array-like or callable
+            If array-like, it is interpreted as a constant desired pose.
+            If callable, it must be htm_d(t).
+
+        t : None or float
+            Current time. Required when htm_d is callable.
+
+        Returns
+        -------
+        H : np.matrix, shape (4, 4)
+            Desired homogeneous transformation matrix.
+        """
+
+        if callable(htm_d):
+            if t is None:
+                raise ValueError("t must be provided when htm_d is callable.")
+            return cls.as_htm(htm_d(t), name="htm_d(t)")
+
+        return cls.as_htm(htm_d, name="htm_d")
+
     # =========================================================================
     # Default pose task
     # =========================================================================
 
     @classmethod
-    def compute_pose_task_error(cls, fk, htm_d):
+    def compute_pose_task_error(cls, fk, htm_d, t=None):
         """
         Compute the default 6D pose task error.
 
@@ -408,35 +630,21 @@ class UAIbotTaskController:
             r[4]   = 1 - y_d.T * y_e
             r[5]   = 1 - z_d.T * z_e
 
-        This orientation error is an axis-alignment error. It is not the
-        logarithmic SO(3) error.
-
-        Parameters
-        ----------
-        fk : array-like, shape (4, 4)
-            Current end-effector homogeneous transformation.
-
-        htm_d : array-like, shape (4, 4)
-            Desired end-effector homogeneous transformation.
-
-        Returns
-        -------
-        r : np.matrix, shape (6, 1)
-            Pose task error.
+        The desired pose can be constant or time-varying.
         """
 
         fk = cls.as_htm(fk, name="fk")
-        htm_d = cls.as_htm(htm_d, name="htm_d")
+        htm_ref = cls.evaluate_htm_reference(htm_d, t=t)
 
         x_e = fk[0:3, 0]
         y_e = fk[0:3, 1]
         z_e = fk[0:3, 2]
         s_e = fk[0:3, 3]
 
-        x_d = htm_d[0:3, 0]
-        y_d = htm_d[0:3, 1]
-        z_d = htm_d[0:3, 2]
-        s_d = htm_d[0:3, 3]
+        x_d = htm_ref[0:3, 0]
+        y_d = htm_ref[0:3, 1]
+        z_d = htm_ref[0:3, 2]
+        s_d = htm_ref[0:3, 3]
 
         r = np.matrix(np.zeros((6, 1)))
         r[0:3, 0] = s_e - s_d
@@ -447,36 +655,16 @@ class UAIbotTaskController:
         return r
 
     @classmethod
-    def compute_pose_task_jacobian(cls, Jg, fk, htm_d):
+    def compute_pose_task_jacobian(cls, Jg, fk, htm_d, t=None):
         """
         Compute the Jacobian of the default pose task.
 
-        The task Jacobian Jr satisfies:
-
-            rdot = Jr(q) * qdot
-
-        where r is the task error defined in compute_pose_task_error.
-
-        Parameters
-        ----------
-        Jg : array-like, shape (6, n)
-            Geometric Jacobian returned by UAIbot.
-
-        fk : array-like, shape (4, 4)
-            Current end-effector homogeneous transformation.
-
-        htm_d : array-like, shape (4, 4)
-            Desired end-effector homogeneous transformation.
-
-        Returns
-        -------
-        Jr : np.matrix, shape (6, n)
-            Task Jacobian.
+        The desired pose can be constant or time-varying.
         """
 
         Jg = np.matrix(Jg, dtype=float)
         fk = cls.as_htm(fk, name="fk")
-        htm_d = cls.as_htm(htm_d, name="htm_d")
+        htm_ref = cls.evaluate_htm_reference(htm_d, t=t)
 
         if Jg.shape[0] != 6:
             raise ValueError(f"Jg must have shape (6, n), got {Jg.shape}.")
@@ -487,9 +675,9 @@ class UAIbotTaskController:
         y_e = fk[0:3, 1]
         z_e = fk[0:3, 2]
 
-        x_d = htm_d[0:3, 0]
-        y_d = htm_d[0:3, 1]
-        z_d = htm_d[0:3, 2]
+        x_d = htm_ref[0:3, 0]
+        y_d = htm_ref[0:3, 1]
+        z_d = htm_ref[0:3, 2]
 
         Jv = Jg[0:3, :]
         Jw = Jg[3:6, :]
@@ -503,72 +691,180 @@ class UAIbotTaskController:
         return Jr
 
     @classmethod
-    def default_pose_task_function(cls, robot, q, Jg, fk, htm_d, **kwargs):
+    def default_pose_task_function(cls, robot, q, Jg, fk, t, htm_d, **kwargs):
         """
-        Default task function wrapper used by the controller.
-
-        Parameters
-        ----------
-        robot : uaibot.Robot
-            UAIbot robot object. Included for a uniform custom-task interface.
-
-        q : array-like, shape (n, 1)
-            Current robot configuration. Included for a uniform custom-task
-            interface.
-
-        Jg : array-like, shape (6, n)
-            Geometric Jacobian. Included for a uniform custom-task interface.
-
-        fk : array-like, shape (4, 4)
-            Current end-effector pose.
-
-        htm_d : array-like, shape (4, 4)
-            Desired end-effector pose.
-
-        kwargs : dict
-            Extra unused arguments.
-
-        Returns
-        -------
-        r : np.matrix, shape (6, 1)
-            Pose task error.
+        Default pose task function wrapper.
         """
 
-        return cls.compute_pose_task_error(fk, htm_d)
+        return cls.compute_pose_task_error(fk=fk, htm_d=htm_d, t=t)
 
     @classmethod
-    def default_pose_task_jacobian(cls, robot, q, Jg, fk, htm_d, **kwargs):
+    def default_pose_task_jacobian(cls, robot, q, Jg, fk, t, htm_d, **kwargs):
         """
-        Default task Jacobian wrapper used by the controller.
-
-        Parameters
-        ----------
-        robot : uaibot.Robot
-            UAIbot robot object. Included for a uniform custom-task interface.
-
-        q : array-like, shape (n, 1)
-            Current robot configuration. Included for a uniform custom-task
-            interface.
-
-        Jg : array-like, shape (6, n)
-            Geometric Jacobian.
-
-        fk : array-like, shape (4, 4)
-            Current end-effector pose.
-
-        htm_d : array-like, shape (4, 4)
-            Desired end-effector pose.
-
-        kwargs : dict
-            Extra unused arguments.
-
-        Returns
-        -------
-        Jr : np.matrix, shape (6, n)
-            Pose task Jacobian.
+        Default pose task Jacobian wrapper.
         """
 
-        return cls.compute_pose_task_jacobian(Jg, fk, htm_d)
+        return cls.compute_pose_task_jacobian(Jg=Jg, fk=fk, htm_d=htm_d, t=t)
+
+    # =========================================================================
+    # Pose tracking task using explicit axes
+    # =========================================================================
+
+    @classmethod
+    def pose_tracking_task_function(
+        cls,
+        robot,
+        q,
+        Jg,
+        fk,
+        t,
+        s_d,
+        x_d,
+        y_d,
+        z_d,
+        **kwargs,
+    ):
+        """
+        Pose tracking task using explicit desired position and frame axes.
+
+        The task is:
+
+            r[0:3] = s_e(q) - s_d(t)
+            r[3]   = 1 - x_d(t).T * x_e(q)
+            r[4]   = 1 - y_d(t).T * y_e(q)
+            r[5]   = 1 - z_d(t).T * z_e(q)
+        """
+
+        if t is None:
+            raise ValueError("t must be provided for pose_tracking_task_function.")
+
+        fk = cls.as_htm(fk, name="fk")
+
+        x_e = fk[0:3, 0]
+        y_e = fk[0:3, 1]
+        z_e = fk[0:3, 2]
+        s_e = fk[0:3, 3]
+
+        s_ref = cls.as_col(s_d(t), 3, name="s_d(t)")
+        x_ref = cls.as_col(x_d(t), 3, name="x_d(t)")
+        y_ref = cls.as_col(y_d(t), 3, name="y_d(t)")
+        z_ref = cls.as_col(z_d(t), 3, name="z_d(t)")
+
+        r = np.matrix(np.zeros((6, 1)))
+        r[0:3, 0] = s_e - s_ref
+        r[3, 0] = cls.scalar(1.0 - x_ref.T * x_e)
+        r[4, 0] = cls.scalar(1.0 - y_ref.T * y_e)
+        r[5, 0] = cls.scalar(1.0 - z_ref.T * z_e)
+
+        return r
+
+    @classmethod
+    def pose_tracking_task_jacobian(
+        cls,
+        robot,
+        q,
+        Jg,
+        fk,
+        t,
+        x_d,
+        y_d,
+        z_d,
+        **kwargs,
+    ):
+        """
+        Pose tracking task Jacobian using explicit desired frame axes.
+
+        The Jacobian is:
+
+            Jr[0:3, :] = Jv
+            Jr[3, :]   = x_d(t).T * S(x_e(q)) * Jw
+            Jr[4, :]   = y_d(t).T * S(y_e(q)) * Jw
+            Jr[5, :]   = z_d(t).T * S(z_e(q)) * Jw
+        """
+
+        if t is None:
+            raise ValueError("t must be provided for pose_tracking_task_jacobian.")
+
+        Jg = np.matrix(Jg, dtype=float)
+        fk = cls.as_htm(fk, name="fk")
+
+        if Jg.shape[0] != 6:
+            raise ValueError(f"Jg must have shape (6, n), got {Jg.shape}.")
+
+        n = Jg.shape[1]
+
+        x_e = fk[0:3, 0]
+        y_e = fk[0:3, 1]
+        z_e = fk[0:3, 2]
+
+        x_ref = cls.as_col(x_d(t), 3, name="x_d(t)")
+        y_ref = cls.as_col(y_d(t), 3, name="y_d(t)")
+        z_ref = cls.as_col(z_d(t), 3, name="z_d(t)")
+
+        Jv = Jg[0:3, :]
+        Jw = Jg[3:6, :]
+
+        Jr = np.matrix(np.zeros((6, n)))
+        Jr[0:3, :] = Jv
+        Jr[3, :] = x_ref.T * ub.Utils.S(x_e) * Jw
+        Jr[4, :] = y_ref.T * ub.Utils.S(y_e) * Jw
+        Jr[5, :] = z_ref.T * ub.Utils.S(z_e) * Jw
+
+        return Jr
+
+    @classmethod
+    def pose_tracking_task_time_derivative(
+        cls,
+        robot,
+        q,
+        Jg,
+        fk,
+        t,
+        s_d_dot,
+        x_d_dot,
+        y_d_dot,
+        z_d_dot,
+        **kwargs,
+    ):
+        """
+        Analytic partial time derivative for pose tracking.
+
+        For:
+
+            r[0:3] = s_e(q) - s_d(t)
+            r[3]   = 1 - x_d(t).T * x_e(q)
+            r[4]   = 1 - y_d(t).T * y_e(q)
+            r[5]   = 1 - z_d(t).T * z_e(q)
+
+        holding q fixed:
+
+            partial r[0:3] / partial t = -s_d_dot(t)
+            partial r[3]   / partial t = -x_d_dot(t).T * x_e(q)
+            partial r[4]   / partial t = -y_d_dot(t).T * y_e(q)
+            partial r[5]   / partial t = -z_d_dot(t).T * z_e(q)
+        """
+
+        if t is None:
+            raise ValueError("t must be provided for pose_tracking_task_time_derivative.")
+
+        fk = cls.as_htm(fk, name="fk")
+
+        x_e = fk[0:3, 0]
+        y_e = fk[0:3, 1]
+        z_e = fk[0:3, 2]
+
+        sd_dot = cls.as_col(s_d_dot(t), 3, name="s_d_dot(t)")
+        xd_dot = cls.as_col(x_d_dot(t), 3, name="x_d_dot(t)")
+        yd_dot = cls.as_col(y_d_dot(t), 3, name="y_d_dot(t)")
+        zd_dot = cls.as_col(z_d_dot(t), 3, name="z_d_dot(t)")
+
+        rt = np.matrix(np.zeros((6, 1)))
+        rt[0:3, 0] = -sd_dot
+        rt[3, 0] = cls.scalar(-xd_dot.T * x_e)
+        rt[4, 0] = cls.scalar(-yd_dot.T * y_e)
+        rt[5, 0] = cls.scalar(-zd_dot.T * z_e)
+
+        return rt
 
     # =========================================================================
     # Task dynamics F(r)
@@ -577,24 +873,7 @@ class UAIbotTaskController:
     @staticmethod
     def F_linear(r, gain=1.0):
         """
-        Linear stable task dynamics.
-
-        The dynamics are:
-
-            F(r) = -gain * r
-
-        Parameters
-        ----------
-        r : array-like, shape (m, 1)
-            Task value.
-
-        gain : float
-            Positive convergence gain.
-
-        Returns
-        -------
-        F : np.matrix, shape (m, 1)
-            Desired task derivative.
+        Linear stable task dynamics: F(r) = -gain*r.
         """
 
         r = UAIbotTaskController.as_col(r, name="r")
@@ -604,31 +883,6 @@ class UAIbotTaskController:
     def F_componentwise_saturation(r, A=0.25, width=0.01):
         """
         Componentwise saturated task dynamics.
-
-        This reproduces the logic:
-
-            if abs(r_i) < width_i:
-                F_i = -A_i * r_i / width_i
-            elif r_i >= width_i:
-                F_i = -A_i
-            else:
-                F_i = A_i
-
-        Parameters
-        ----------
-        r : array-like, shape (m, 1)
-            Task value.
-
-        A : float or array-like, shape (m, 1)
-            Maximum absolute value of each component of F.
-
-        width : float or array-like, shape (m, 1)
-            Width of the linear region around zero.
-
-        Returns
-        -------
-        F : np.matrix, shape (m, 1)
-            Desired task derivative.
         """
 
         r = UAIbotTaskController.as_col(r, name="r")
@@ -669,27 +923,7 @@ class UAIbotTaskController:
     @staticmethod
     def F_tanh(r, A=0.25, width=0.01):
         """
-        Smooth saturated task dynamics using tanh.
-
-        The dynamics are:
-
-            F_i = -A_i * tanh(r_i / width_i)
-
-        Parameters
-        ----------
-        r : array-like, shape (m, 1)
-            Task value.
-
-        A : float or array-like, shape (m, 1)
-            Saturation amplitude.
-
-        width : float or array-like, shape (m, 1)
-            Smoothness width. Smaller values make the function saturate faster.
-
-        Returns
-        -------
-        F : np.matrix, shape (m, 1)
-            Desired task derivative.
+        Smooth saturated task dynamics: F_i = -A_i*tanh(r_i/width_i).
         """
 
         r = UAIbotTaskController.as_col(r, name="r")
@@ -719,33 +953,6 @@ class UAIbotTaskController:
     def F_normalized(r, max_norm=0.25, gain=1.0, eps=1e-12):
         """
         Norm-saturated vector field for task dynamics.
-
-        This function first computes:
-
-            F_raw = -gain * r
-
-        and then saturates its Euclidean norm:
-
-            ||F|| <= max_norm
-
-        Parameters
-        ----------
-        r : array-like, shape (m, 1)
-            Task value.
-
-        max_norm : float
-            Maximum norm of F.
-
-        gain : float
-            Linear gain before saturation.
-
-        eps : float
-            Small number used to avoid division by zero.
-
-        Returns
-        -------
-        F : np.matrix, shape (m, 1)
-            Desired task derivative.
         """
 
         r = UAIbotTaskController.as_col(r, name="r")
@@ -762,26 +969,6 @@ class UAIbotTaskController:
     def F_sqrt(r, gain=1.0, eps=1e-6):
         """
         Nonlinear stabilizing task dynamics based on square-root scaling.
-
-        The function is applied componentwise:
-
-            F_i(r) = -gain * r_i / (sqrt(abs(r_i)) + eps)
-
-        Parameters
-        ----------
-        r : array-like, shape (m, 1)
-            Task value.
-
-        gain : float
-            Positive gain.
-
-        eps : float
-            Small value used to avoid division by zero.
-
-        Returns
-        -------
-        F : np.matrix, shape (m, 1)
-            Desired task derivative.
         """
 
         r = UAIbotTaskController.as_col(r, name="r")
@@ -801,12 +988,6 @@ class UAIbotTaskController:
     def available_task_dynamics(cls):
         """
         Return a dictionary describing the predefined task dynamics functions.
-
-        Returns
-        -------
-        dynamics : dict
-            Dictionary where each key is a short name and each value contains
-            the function object and a text description.
         """
 
         return {
@@ -848,12 +1029,6 @@ class UAIbotTaskController:
     def available_task_functions(cls):
         """
         Return a dictionary describing the predefined task functions.
-
-        Returns
-        -------
-        tasks : dict
-            Dictionary where each key is a short name and each value contains
-            the task function, task Jacobian, and a text description.
         """
 
         return {
@@ -861,8 +1036,17 @@ class UAIbotTaskController:
                 "task_function": cls.default_pose_task_function,
                 "task_jacobian": cls.default_pose_task_jacobian,
                 "description": (
-                    "Default 6D end-effector pose task: position error plus "
-                    "axis-alignment orientation error."
+                    "Default 6D end-effector pose task. The desired pose can be "
+                    "constant htm_d or time-varying htm_d(t)."
+                ),
+            },
+            "pose_tracking_axes": {
+                "task_function": cls.pose_tracking_task_function,
+                "task_jacobian": cls.pose_tracking_task_jacobian,
+                "task_time_derivative": cls.pose_tracking_task_time_derivative,
+                "description": (
+                    "6D pose tracking task using explicit s_d(t), x_d(t), y_d(t), "
+                    "z_d(t), and optionally their derivatives."
                 ),
             },
         }
@@ -958,15 +1142,13 @@ def test_available_catalogs():
     assert "normalized" in dynamics
     assert "sqrt" in dynamics
     assert "pose_axis_alignment" in tasks
+    assert "pose_tracking_axes" in tasks
 
 
 
-def test_default_pose_task_controller():
+def test_default_pose_task_controller_constant_pose():
     """
-    Test the controller using the default pose task.
-
-    This computes only one control action. It does not animate, integrate, or
-    run a simulation.
+    Test the controller using the default constant pose task.
     """
 
     robot = ub.Robot.create_kuka_kr5()
@@ -981,9 +1163,10 @@ def test_default_pose_task_controller():
             "width": [0.01, 0.01, 0.01, 0.01, 0.01, 0.01],
         },
         damping=1e-3,
+        time_derivative_mode="none",
     )
 
-    u, r, Jr, Fr = controller.compute_control()
+    u, r, Jr, Fr, rt = controller.compute_control()
 
     n = robot.q.shape[0]
 
@@ -991,63 +1174,90 @@ def test_default_pose_task_controller():
     assert r.shape == (6, 1)
     assert Jr.shape == (6, n)
     assert Fr.shape == (6, 1)
+    assert rt.shape == (6, 1)
 
-    _assert_finite("test_default_pose_task_controller u", u)
-    _assert_finite("test_default_pose_task_controller r", r)
-    _assert_finite("test_default_pose_task_controller Jr", Jr)
-    _assert_finite("test_default_pose_task_controller Fr", Fr)
+    _assert_close("test_default_pose_task_controller_constant_pose rt", rt, np.zeros((6, 1)))
+    _assert_finite("test_default_pose_task_controller_constant_pose u", u)
+    _assert_finite("test_default_pose_task_controller_constant_pose r", r)
+    _assert_finite("test_default_pose_task_controller_constant_pose Jr", Jr)
+    _assert_finite("test_default_pose_task_controller_constant_pose Fr", Fr)
 
 
 
-def custom_pose_task_function(robot, q, Jg, fk, htm_d, **kwargs):
+def custom_sine_task_function(robot, q, Jg, fk, t, **kwargs):
     """
-    Custom task function used only for testing the custom-task interface.
-    """
-
-    return UAIbotTaskController.compute_pose_task_error(fk, htm_d)
-
-
-
-def custom_pose_task_jacobian(robot, q, Jg, fk, htm_d, **kwargs):
-    """
-    Custom task Jacobian used only for testing the custom-task interface.
+    Custom 6D time-varying task used to test numerical time derivative.
     """
 
-    return UAIbotTaskController.compute_pose_task_jacobian(Jg, fk, htm_d)
+    return np.sin(t) * np.matrix(np.ones((6, 1)))
 
 
 
-def test_custom_task_controller():
+def custom_sine_task_jacobian(robot, q, Jg, fk, t, **kwargs):
     """
-    Test the controller with explicitly passed task_function and task_jacobian.
+    Custom 6D task Jacobian used to test the interface.
+    """
+
+    return np.matrix(np.eye(6))
+
+
+
+def test_numeric_time_derivative():
+    """
+    Test the fourth-order forward numerical time derivative.
     """
 
     robot = ub.Robot.create_kuka_kr5()
-    htm_d = ub.Utils.trn([-0.3, 0.2, -0.3]) * robot.fkm()
 
     controller = UAIbotTaskController(
         robot=robot,
-        task_function=custom_pose_task_function,
-        task_jacobian=custom_pose_task_jacobian,
-        task_args={"htm_d": htm_d},
+        task_function=custom_sine_task_function,
+        task_jacobian=custom_sine_task_jacobian,
         F=UAIbotTaskController.F_linear,
         F_args={"gain": 1.0},
         damping=1e-3,
+        time_derivative_mode="numeric",
+        time_derivative_eps=1e-4,
     )
 
-    u, r, Jr, Fr = controller.compute_control()
+    t = 0.7
+    u, r, Jr, Fr, rt = controller.compute_control(t=t)
 
-    n = robot.q.shape[0]
+    expected_rt = np.cos(t) * np.matrix(np.ones((6, 1)))
 
-    assert u.shape == (n, 1)
-    assert r.shape == (6, 1)
-    assert Jr.shape == (6, n)
-    assert Fr.shape == (6, 1)
+    _assert_close("test_numeric_time_derivative", rt, expected_rt, tol=1e-7)
+    _assert_finite("test_numeric_time_derivative u", u)
 
-    _assert_finite("test_custom_task_controller u", u)
-    _assert_finite("test_custom_task_controller r", r)
-    _assert_finite("test_custom_task_controller Jr", Jr)
-    _assert_finite("test_custom_task_controller Fr", Fr)
+
+
+def test_analytic_pose_tracking_time_derivative():
+    """
+    Test the analytic time derivative for pose tracking with explicit axes.
+    """
+
+    robot = ub.Robot.create_kuka_kr5()
+    q = robot.q
+    Jg, fk = robot.jac_geo(q)
+
+    s_d_dot = lambda t: np.matrix([[1.0], [2.0], [3.0]])
+    x_d_dot = lambda t: np.matrix([[0.1], [0.0], [0.0]])
+    y_d_dot = lambda t: np.matrix([[0.0], [0.2], [0.0]])
+    z_d_dot = lambda t: np.matrix([[0.0], [0.0], [0.3]])
+
+    rt = UAIbotTaskController.pose_tracking_task_time_derivative(
+        robot=robot,
+        q=q,
+        Jg=Jg,
+        fk=fk,
+        t=0.0,
+        s_d_dot=s_d_dot,
+        x_d_dot=x_d_dot,
+        y_d_dot=y_d_dot,
+        z_d_dot=z_d_dot,
+    )
+
+    assert rt.shape == (6, 1)
+    _assert_finite("test_analytic_pose_tracking_time_derivative rt", rt)
 
 
 
@@ -1071,6 +1281,7 @@ def test_short_control_loop_without_animation():
         F=UAIbotTaskController.F_linear,
         F_args={"gain": 1.0},
         damping=1e-3,
+        time_derivative_mode="none",
     )
 
     q = robot.q
@@ -1079,7 +1290,7 @@ def test_short_control_loop_without_animation():
     hist_u = np.matrix(np.zeros((robot.q.shape[0], 0)))
 
     for _ in range(steps):
-        u, r, Jr, Fr = controller.compute_control(q=q)
+        u, r, Jr, Fr, rt = controller.compute_control(q=q)
 
         hist_r = np.block([hist_r, r])
         hist_u = np.block([hist_u, u])
@@ -1105,8 +1316,9 @@ def run_tests():
         test_F_componentwise_saturation,
         test_F_sqrt,
         test_available_catalogs,
-        test_default_pose_task_controller,
-        test_custom_task_controller,
+        test_default_pose_task_controller_constant_pose,
+        test_numeric_time_derivative,
+        test_analytic_pose_tracking_time_derivative,
         test_short_control_loop_without_animation,
     ]
 
@@ -1117,97 +1329,5 @@ def run_tests():
     print("\nAll tests passed.")
 
 
-def demo_pose_regulation_visualization():
-    """
-    Run a visual demo of the default pose-regulation controller.
-
-    This demo uses UAIbotTaskController only to compute the control action.
-    The integration and animation are handled outside the controller.
-    """
-    import matplotlib.pyplot as plt
-
-    dt = 0.01
-    t = 0.0
-    tmax = 6.0
-
-    robot = ub.Robot.create_kuka_kr5()
-
-    # Desired pose, same style as the original example.
-    htm_d = ub.Utils.trn([-0.3, 0.2, -0.3]) * robot.fkm()
-
-    # Desired frame visualization.
-    frame_d = ub.Frame(htm=htm_d)
-
-    sim = ub.Simulation([robot, frame_d])
-
-    controller = UAIbotTaskController(
-        robot=robot,
-        htm_d=htm_d,
-        F=UAIbotTaskController.F_tanh,
-        F_args={
-            "A": 0.25,
-            "width": 0.01,
-        },
-        damping=1e-3,
-    )
-
-    n = robot.q.shape[0]
-
-    hist_r = np.matrix(np.zeros((6, 0)))
-    hist_u = np.matrix(np.zeros((n, 0)))
-    hist_t = []
-
-    # Current configuration.
-    q = robot.q
-
-    for _ in range(round(tmax / dt)):
-        # Controller only computes the action.
-        u, r, Jr, Fr = controller.compute_control(q=q)
-
-        hist_r = np.block([hist_r, r])
-        hist_u = np.block([hist_u, u])
-        hist_t.append(t)
-
-        # Integration is outside the controller.
-        q_next = q + u * dt
-
-        # Animation is also outside the controller.
-        robot.add_ani_frame(time=t + dt, q=q_next)
-
-        q = q_next
-        t += dt
-
-    sim.run()
-
-    # Convert histories to arrays for plotting.
-    hist_r_array = np.asarray(hist_r, dtype=float)
-    hist_u_array = np.asarray(hist_u, dtype=float)
-
-    # Plot task function history.
-    plt.figure()
-    for i in range(hist_r_array.shape[0]):
-        plt.plot(hist_t, hist_r_array[i, :], label=f"r[{i}]")
-
-    plt.xlabel("Tempo (s)")
-    plt.ylabel("Função de tarefa")
-    plt.title("Histórico da função de tarefa")
-    plt.grid(True)
-
-    # Plot control action history.
-    plt.figure()
-    for i in range(hist_u_array.shape[0]):
-        plt.plot(hist_t, hist_u_array[i, :], label=f"u[{i}]")
-
-    plt.xlabel("Tempo (s)")
-    plt.ylabel("Ação de controle")
-    plt.title("Histórico da ação de controle")
-    plt.grid(True)
-
-    plt.show()
-    
-    
-    
 if __name__ == "__main__":
     run_tests()
-    # demo_pose_regulation_visualization()
-    
