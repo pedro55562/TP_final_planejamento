@@ -410,10 +410,44 @@ def print_loop_status(robot, q, r, mode, target_htm, use_grasp_check):
 # Scene creation
 # =============================================================================
 
-
-def create_scene():
+def _as_point_cloud(obj, color="cyan", size=0.02, disc=0.04):
     """
-    Create the robot, cube, tables, and obstacle used in the scene.
+    Convert a UAIbot object into a point cloud while keeping it as one object.
+    """
+
+    return ub.PointCloud(
+        points=[
+            np.matrix(p).T
+            for p in obj.to_point_cloud(disc=disc).points.T
+        ],
+        color=color,
+        size=size,
+    )
+
+
+
+def create_scene(param_use_pc=False):
+    """
+    Create the robot, cube, and scene obstacles.
+
+    Parameters
+    ----------
+    param_use_pc : bool
+        If True, each scene obstacle is converted individually to a point cloud.
+
+    Returns
+    -------
+    robot : ub.Robot
+        Robot used in the simulation.
+    cube : ub.Box
+        Object manipulated by the robot.
+    obstacles : list
+        Scene obstacles. The order is:
+
+            obstacles[0] -> pickup table
+            obstacles[1] -> placement table
+            obstacles[2] -> robot base table
+            obstacles[3] -> central obstacle
     """
 
     robot = ub.Robot.create_kuka_kr5(ub.Utils.trn([0, 0, 0.2]))
@@ -484,12 +518,20 @@ def create_scene():
         mesh_material=material_cube,
     )
 
-    # List used only for robot-environment collision constraints.
-    # The cube is kept out of this list to allow approach and grasping.
-    environment_obstacles = [table_pick, table_place, obstacle]
+    obstacles = [
+        table_pick,
+        table_place,
+        table_base,
+        obstacle,
+    ]
 
-    return robot, cube, table_pick, table_place, table_base, obstacle, environment_obstacles
+    if param_use_pc:
+        obstacles = [
+            _as_point_cloud(obs)
+            for obs in obstacles
+        ]
 
+    return robot, cube, obstacles
 
 # =============================================================================
 # Mode configuration
@@ -651,8 +693,8 @@ def create_qp_controller(
         distance_h=distance_h,
         distance_eps=distance_eps,
         distance_mode=distance_mode,
-        extra_cbf_functions=extra_cbf_functions,
-        extra_cbf_args=None,
+        #extra_cbf_functions=extra_cbf_functions,
+        #extra_cbf_args=None,
     )
 
 
@@ -703,20 +745,26 @@ def plot_histories(hist_t, hist_r_norm, hist_u, hist_mode):
 # =============================================================================
 
 
-def run_pick_place_demo():
+def run_pick_place_demo(param_use_pc=False):
     """
     Run the reactive pick-and-place demo in a single control loop.
     """
 
-    (
-        robot,
-        cube,
-        table_pick,
-        table_place,
-        table_base,
-        obstacle,
-        environment_obstacles,
-    ) = create_scene()
+    robot, cube, obstacles = create_scene(param_use_pc=param_use_pc)
+
+    table_pick = obstacles[0]
+    table_place = obstacles[1]
+    obstacle = obstacles[3]
+
+    # List used only for robot-environment collision constraints.
+    # The base table is intentionally not included because it intersects the
+    # robot base region. The cube is also kept out of this list to allow
+    # approach and grasping.
+    environment_obstacles = [
+        obstacles[0],
+        obstacles[1],
+        obstacles[3],
+    ]
 
     cube_grasp_htm = ub.Utils.trn([0.8, 0, 0.45]) * ub.Utils.roty(np.pi)
     cube_pregrasp_htm = (
@@ -768,10 +816,7 @@ def run_pick_place_demo():
 
     sim = ub.Simulation.create_sim_factory([
         robot,
-        table_pick,
-        table_place,
-        table_base,
-        obstacle,
+        *obstacles,
         cube,
         *frames,
     ])
@@ -883,4 +928,4 @@ def run_pick_place_demo():
 
 
 if __name__ == "__main__":
-    run_pick_place_demo()
+    run_pick_place_demo(param_use_pc=False)
