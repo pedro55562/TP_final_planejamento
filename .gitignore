@@ -108,15 +108,11 @@ CMakeLists.txt.user
 # =========================
 # Documentation / HTML
 # =========================
-*.html
 *.htm
 *.dox
 *.wikidoc
 *.tag
 
-doc/html/
-docs/html/
-html/
 rosdoc_lite/
 
 
