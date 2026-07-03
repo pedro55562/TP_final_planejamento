@@ -8,9 +8,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 UAIBOT_PACKAGE = ROOT / "UAIbotPy" / "uaibot"
-UAIBOT_BUILD = UAIBOT_PACKAGE / "c_implementation" / "build"
 
-for path in (ROOT, SRC, UAIBOT_PACKAGE, UAIBOT_BUILD):
+for path in (ROOT, SRC, UAIBOT_PACKAGE):
     path_str = str(path)
     if path_str not in sys.path:
         sys.path.insert(0, path_str)

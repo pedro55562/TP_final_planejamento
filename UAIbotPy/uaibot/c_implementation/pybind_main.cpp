@@ -25,6 +25,7 @@
 
 #include "declarations.h"
 #include "rigid_body_collision.hpp"
+#include "rrt_se3.hpp"
 #include "se3_bindings.hpp"
 
 using namespace std;
@@ -105,6 +106,38 @@ PYBIND11_MODULE(uaibot_cpp_bind, m) {
          .def_readonly("robot_object_index", &CollisionOracleResult::robot_object_index)
          .def_readonly("obstacle_index", &CollisionOracleResult::obstacle_index)
          .def_readonly("info", &CollisionOracleResult::info);
+
+     py::class_<RRTSE3Options>(m, "CPP_RRTSE3Options")
+         .def(py::init<>())
+         .def_readwrite("max_iterations", &RRTSE3Options::max_iterations)
+         .def_readwrite("step_size", &RRTSE3Options::step_size)
+         .def_readwrite("goal_tolerance", &RRTSE3Options::goal_tolerance)
+         .def_readwrite("edge_resolution", &RRTSE3Options::edge_resolution)
+         .def_readwrite("output_resolution", &RRTSE3Options::output_resolution)
+         .def_readwrite("connect_resolution", &RRTSE3Options::connect_resolution)
+         .def_readwrite("goal_bias", &RRTSE3Options::goal_bias)
+         .def_readwrite("other_tree_bias", &RRTSE3Options::other_tree_bias)
+         .def_readwrite("shortcut_iterations", &RRTSE3Options::shortcut_iterations)
+         .def_readwrite("collision_tol", &RRTSE3Options::collision_tol)
+         .def_readwrite("collision_dist_tol", &RRTSE3Options::collision_dist_tol)
+         .def_readwrite("collision_no_iter_max", &RRTSE3Options::collision_no_iter_max);
+
+     py::class_<RRTSE3Result>(m, "CPP_RRTSE3Result")
+         .def_readonly("success", &RRTSE3Result::success)
+         .def_readonly("message", &RRTSE3Result::message)
+         .def_readonly("path", &RRTSE3Result::path)
+         .def_readonly("path_discrete", &RRTSE3Result::path_discrete)
+         .def_readonly("iterations", &RRTSE3Result::iterations)
+         .def_readonly("total_iterations", &RRTSE3Result::total_iterations)
+         .def_readonly("number_of_nodes_start", &RRTSE3Result::number_of_nodes_start)
+         .def_readonly("number_of_nodes_goal", &RRTSE3Result::number_of_nodes_goal)
+         .def_readonly("execution_time", &RRTSE3Result::execution_time)
+         .def_readonly("planning_time", &RRTSE3Result::planning_time)
+         .def_readonly("shortcut_time", &RRTSE3Result::shortcut_time)
+         .def_readonly("discretization_time", &RRTSE3Result::discretization_time)
+         .def_readonly("raw_path_size", &RRTSE3Result::raw_path_size)
+         .def_readonly("shortcut_path_size", &RRTSE3Result::shortcut_path_size)
+         .def_readonly("discrete_path_size", &RRTSE3Result::discrete_path_size);
 
      py::class_<VectorFieldResult>(m, "CPP_VectorFieldResult")
          .def_readonly("dist", &VectorFieldResult::dist)
@@ -247,6 +280,10 @@ PYBIND11_MODULE(uaibot_cpp_bind, m) {
      m.def("check_rigid_body_collision", &check_rigid_body_collision,
            py::arg("robot_model"), py::arg("H_robot"), py::arg("obstacles"),
            py::arg("tol"), py::arg("dist_tol"), py::arg("no_iter_max"));
+
+     m.def("plan_rrt_se3_bidirectional", &plan_rrt_se3_bidirectional,
+           py::arg("H_start"), py::arg("H_goal"), py::arg("position_bounds"), py::arg("G"),
+           py::arg("robot_model"), py::arg("obstacles"), py::arg("options"));
 
      bind_se3_utilities(m);
 }

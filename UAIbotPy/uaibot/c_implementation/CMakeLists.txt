@@ -56,6 +56,7 @@ set(SOURCES
     src/se3_utilities.cpp
     bindings/se3_bindings.cpp
     src/rigid_body_collision.cpp
+    src/rrt_se3.cpp
     declarations.h  
     gjk.c         
     gjk.h

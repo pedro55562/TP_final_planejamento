@@ -13,8 +13,14 @@ UAIBOT_DIR = ROOT / "UAIbotPy" / "uaibot"
 
 def load_utils_module():
     path_str = str(UAIBOT_DIR)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+    sys.path.insert(0, path_str)
+
+    loaded_cpp = sys.modules.get("uaibot_cpp_bind")
+    loaded_cpp_path = Path(getattr(loaded_cpp, "__file__", "")).resolve() if loaded_cpp else None
+    if loaded_cpp_path is None or loaded_cpp_path.parent != UAIBOT_DIR.resolve():
+        sys.modules.pop("uaibot_cpp_bind", None)
 
     os.environ["CPP_SO_FOUND"] = "1"
 

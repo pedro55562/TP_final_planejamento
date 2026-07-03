@@ -41,6 +41,44 @@ class RigidBodyCollisionResult:
         )
 
 
+class RRTSE3PlannerResult:
+    """Friendly Python result returned by Utils.rrt_se3_bidirectional."""
+
+    def __init__(self, cpp_result):
+        self.success = bool(cpp_result.success)
+        self.message = cpp_result.message
+        self.path = [np.matrix(H, dtype=float) for H in cpp_result.path]
+        self.path_discrete = [np.matrix(H, dtype=float) for H in cpp_result.path_discrete]
+        self.iterations = int(cpp_result.iterations)
+        self.total_iterations = int(cpp_result.total_iterations)
+        self.number_of_nodes_start = int(cpp_result.number_of_nodes_start)
+        self.number_of_nodes_goal = int(cpp_result.number_of_nodes_goal)
+        self.execution_time = float(cpp_result.execution_time)
+        self.planning_time = float(cpp_result.planning_time)
+        self.shortcut_time = float(cpp_result.shortcut_time)
+        self.discretization_time = float(cpp_result.discretization_time)
+        self.raw_path_size = int(cpp_result.raw_path_size)
+        self.shortcut_path_size = int(cpp_result.shortcut_path_size)
+        self.discrete_path_size = int(cpp_result.discrete_path_size)
+
+    def __repr__(self):
+        return (
+            "RRTSE3PlannerResult("
+            f"success={self.success}, "
+            f"message={self.message!r}, "
+            f"path_len={len(self.path)}, "
+            f"path_discrete_len={len(self.path_discrete)}, "
+            f"iterations={self.iterations}, "
+            f"total_iterations={self.total_iterations}, "
+            f"number_of_nodes_start={self.number_of_nodes_start}, "
+            f"number_of_nodes_goal={self.number_of_nodes_goal}, "
+            f"execution_time={self.execution_time}, "
+            f"raw_path_size={self.raw_path_size}, "
+            f"shortcut_path_size={self.shortcut_path_size}, "
+            f"discrete_path_size={self.discrete_path_size})"
+        )
+
+
 class Utils:
     """A library that contains some utilities for UAIbot. All of the functions are static."""
 
@@ -1196,7 +1234,189 @@ class Utils:
         )
 
         return RigidBodyCollisionResult(cpp_result)
-                
+
+    @staticmethod
+    def rrt_se3_bidirectional(
+        h_start,
+        h_goal,
+        position_bounds,
+        ell,
+        robot_model,
+        obstacles,
+        max_iterations=5000,
+        step_size=0.2,
+        goal_tolerance=0.05,
+        edge_resolution=0.03,
+        output_resolution=0.01,
+        connect_resolution=None,
+        goal_bias=0.05,
+        other_tree_bias=0.20,
+        shortcut_iterations=100,
+        collision_tol=1e-4,
+        collision_dist_tol=1e-3,
+        collision_no_iter_max=20,
+    ):
+        """
+        Plans a collision-free path for a rigid body in SE(3) using bidirectional RRT.
+
+        Parameters
+        ----------
+        h_start : array-like, shape (4, 4)
+            Initial pose of the rigid body in SE(3).
+
+        h_goal : array-like, shape (4, 4)
+            Goal pose of the rigid body in SE(3).
+
+        position_bounds : array-like, shape (3, 2)
+            Bounds used for translational sampling. Each row contains
+            [min, max] for x, y and z.
+
+        ell : float
+            Metric scale that defines how many meters correspond to one radian.
+
+        robot_model : list
+            Geometric primitives representing the robot in its local frame.
+
+        obstacles : list
+            Fixed obstacles in the world frame.
+
+        max_iterations : int, optional
+            Maximum number of RRT iterations.
+
+        step_size : float, optional
+            Maximum step used by the SE(3) steering function.
+
+        goal_tolerance : float, optional
+            Distance threshold used to accept a connection between the two trees.
+
+        edge_resolution : float, optional
+            Resolution used internally for collision checking along edges.
+
+        output_resolution : float, optional
+            Resolution used to discretize the final returned path.
+
+        connect_resolution : float or None, optional
+            Internal resolution used to limit RRT-Connect extension attempts. If
+            None, the value of edge_resolution is used.
+
+        goal_bias : float, optional
+            Probability of sampling the root of the opposite tree.
+
+        other_tree_bias : float, optional
+            Probability of sampling a random node from the opposite tree.
+
+        shortcut_iterations : int, optional
+            Number of shortcut attempts used in post-processing.
+
+        collision_tol : float, optional
+            Numerical tolerance used by the geometric distance computation.
+
+        collision_dist_tol : float, optional
+            Safety distance threshold used by the collision oracle.
+
+        collision_no_iter_max : int, optional
+            Maximum number of iterations used by the distance computation.
+
+        Returns
+        -------
+        result : RRTSE3PlannerResult
+            Object with fields: success, message, path, path_discrete,
+            iterations, total_iterations, number_of_nodes_start,
+            number_of_nodes_goal, execution_time, planning_time,
+            shortcut_time, discretization_time, raw_path_size,
+            shortcut_path_size and discrete_path_size.
+        """
+
+        if os.environ['CPP_SO_FOUND'] == '0':
+            raise Exception("The C++ .so file was not loaded.")
+
+        if not Utils.is_a_matrix(h_start, 4, 4):
+            raise Exception("The parameter 'h_start' must be a 4x4 homogeneous transformation matrix.")
+
+        if not Utils.is_a_matrix(h_goal, 4, 4):
+            raise Exception("The parameter 'h_goal' must be a 4x4 homogeneous transformation matrix.")
+
+        if not Utils.is_a_matrix(position_bounds, 3, 2):
+            raise Exception("The parameter 'position_bounds' must be a 3x2 matrix.")
+
+        if not Utils.is_a_number(ell) or ell <= 0:
+            raise Exception("The parameter 'ell' must be a positive number.")
+
+        if not isinstance(robot_model, (list, tuple)):
+            robot_model = [robot_model]
+
+        if not isinstance(obstacles, (list, tuple)):
+            obstacles = [obstacles]
+
+        if not Utils.is_a_natural_number(max_iterations):
+            raise Exception("The parameter 'max_iterations' must be a nonnegative integer.")
+
+        if not Utils.is_a_number(step_size) or step_size <= 0:
+            raise Exception("The parameter 'step_size' must be a positive number.")
+
+        if not Utils.is_a_number(goal_tolerance) or goal_tolerance <= 0:
+            raise Exception("The parameter 'goal_tolerance' must be a positive number.")
+
+        if not Utils.is_a_number(edge_resolution) or edge_resolution <= 0:
+            raise Exception("The parameter 'edge_resolution' must be a positive number.")
+
+        if not Utils.is_a_number(output_resolution) or output_resolution <= 0:
+            raise Exception("The parameter 'output_resolution' must be a positive number.")
+
+        if connect_resolution is None:
+            connect_resolution = edge_resolution
+
+        if not Utils.is_a_number(connect_resolution) or connect_resolution <= 0:
+            raise Exception("The parameter 'connect_resolution' must be a positive number.")
+
+        if not Utils.is_a_number(goal_bias) or goal_bias < 0 or goal_bias > 1:
+            raise Exception("The parameter 'goal_bias' must be a number in [0, 1].")
+
+        if not Utils.is_a_number(other_tree_bias) or other_tree_bias < 0 or other_tree_bias > 1:
+            raise Exception("The parameter 'other_tree_bias' must be a number in [0, 1].")
+
+        if not Utils.is_a_natural_number(shortcut_iterations):
+            raise Exception("The parameter 'shortcut_iterations' must be a nonnegative integer.")
+
+        if not Utils.is_a_number(collision_tol) or collision_tol <= 0:
+            raise Exception("The parameter 'collision_tol' must be a positive number.")
+
+        if not Utils.is_a_number(collision_dist_tol) or collision_dist_tol < 0:
+            raise Exception("The parameter 'collision_dist_tol' must be a nonnegative number.")
+
+        if not Utils.is_a_natural_number(collision_no_iter_max):
+            raise Exception("The parameter 'collision_no_iter_max' must be a nonnegative integer.")
+
+        robot_model_cpp = [Utils._collision_object_to_cpp(obj) for obj in robot_model]
+        obstacles_cpp = [Utils._collision_object_to_cpp(obj) for obj in obstacles]
+
+        options = ub_cpp.CPP_RRTSE3Options()
+        options.max_iterations = int(max_iterations)
+        options.step_size = float(step_size)
+        options.goal_tolerance = float(goal_tolerance)
+        options.edge_resolution = float(edge_resolution)
+        options.output_resolution = float(output_resolution)
+        options.connect_resolution = float(connect_resolution)
+        options.goal_bias = float(goal_bias)
+        options.other_tree_bias = float(other_tree_bias)
+        options.shortcut_iterations = int(shortcut_iterations)
+        options.collision_tol = float(collision_tol)
+        options.collision_dist_tol = float(collision_dist_tol)
+        options.collision_no_iter_max = int(collision_no_iter_max)
+
+        G = ub_cpp.make_metric_matrix(float(ell))
+        cpp_result = ub_cpp.plan_rrt_se3_bidirectional(
+            np.matrix(h_start, dtype=float),
+            np.matrix(h_goal, dtype=float),
+            np.matrix(position_bounds, dtype=float),
+            G,
+            robot_model_cpp,
+            obstacles_cpp,
+            options,
+        )
+
+        return RRTSE3PlannerResult(cpp_result)
+                 
     #######################################
     # Distance computation functions
     #######################################
@@ -1406,9 +1626,6 @@ class Utils:
         else:
             dist_res = obj_a_cpp.dist_to(obj_b_cpp, h, eps, tol, no_iter_max, p_a)
             return Utils.cvt(dist_res.proj_A), Utils.cvt(dist_res.proj_B), dist_res.dist, dist_res.hist_error
-
-
-
 
 
 
