@@ -1,0 +1,14 @@
+\babel@toc {brazil}{}\relax 
+\contentsline {section}{\numberline {1}Introdução}{2}{section.1}%
+\contentsline {section}{\numberline {2}Planejamento de movimento em $SE(3)$}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Representação da configuração}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Métrica utilizada}{2}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Interpolação e avanço}{3}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}RRT bidirecional}{4}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Oráculo de colisão}{4}{subsection.2.5}%
+\contentsline {subsection}{\numberline {2.6}Discretização de arestas}{5}{subsection.2.6}%
+\contentsline {subsection}{\numberline {2.7}Pós-processamento por shortcut}{5}{subsection.2.7}%
+\contentsline {subsection}{\numberline {2.8}Seguimento por campo vetorial}{5}{subsection.2.8}%
+\contentsline {subsection}{\numberline {2.9}Resumo da implementação}{6}{subsection.2.9}%
+\contentsline {section}{\numberline {3}Resultados preliminares}{6}{section.3}%
+\contentsline {section}{\numberline {4}Conclusão preliminar}{7}{section.4}%

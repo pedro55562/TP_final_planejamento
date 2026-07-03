@@ -1,0 +1,42 @@
+\begin{thebibliography}{1}
+
+\bibitem{Bartelt2026}
+Felipe Bartelt, Vinicius~M. Gon{\c{c}}alves, and Luciano C.~A. Pimenta.
+\newblock Constructive vector fields for path following in fully-actuated systems on matrix lie groups, 2026.
+
+\bibitem{Choset2005}
+Howie Choset, Kevin~M. Lynch, Seth Hutchinson, George~A. Kantor, Wolfram Burgard, Lydia~E. Kavraki, and Sebastian Thrun.
+\newblock {\em Principles of Robot Motion: Theory, Algorithms, and Implementations}.
+\newblock MIT Press, 2005.
+
+\bibitem{KuffnerLaValle2000}
+James~J. Kuffner and Steven~M. LaValle.
+\newblock Rrt-connect: An efficient approach to single-query path planning.
+\newblock In {\em Proceedings of the IEEE International Conference on Robotics and Automation}, pages 995--1001, 2000.
+
+\bibitem{LaValle2006}
+Steven~M. LaValle.
+\newblock {\em Planning Algorithms}.
+\newblock Cambridge University Press, 2006.
+
+\bibitem{LynchPark2017}
+Kevin~M. Lynch and Frank~C. Park.
+\newblock {\em Modern Robotics: Mechanics, Planning, and Control}.
+\newblock Cambridge University Press, 2017.
+
+\bibitem{Murray1994}
+Richard~M. Murray, Zexiang Li, and S.~Shankar Sastry.
+\newblock {\em A Mathematical Introduction to Robotic Manipulation}.
+\newblock CRC Press, 1994.
+
+\bibitem{Park1995}
+Frank~C. Park.
+\newblock Distance metrics on the rigid-body motions with applications to mechanism design.
+\newblock {\em Journal of Mechanical Design}, 117(1):48--54, 1995.
+
+\bibitem{Shoemake1992}
+Ken Shoemake.
+\newblock Uniform random rotations.
+\newblock In David Kirk, editor, {\em Graphics Gems III}, pages 124--132. Academic Press, 1992.
+
+\end{thebibliography}
