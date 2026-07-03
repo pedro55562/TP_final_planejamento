@@ -11,7 +11,7 @@ How to compile the UAIBot pybind module into the uaibot package folder:
 
 Then run this file from the project root:
 
-    PYTHONPATH="$PWD/UAIbotPy:$PWD/UAIbotPy/uaibot" python3 test_uaibot_rigid_body_collision.py
+    python3 examples/rigid_body_collision_smoke.py
 
 This script intentionally uses the Python high-level API:
 
@@ -31,14 +31,20 @@ import types
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parent
-UAIBOT_DIR = ROOT / "UAIbotPy" / "uaibot"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+UAIBOT_DIR = PROJECT_ROOT / "UAIbotPy" / "uaibot"
 
 
 def load_utils_module():
     uaibot_path = str(UAIBOT_DIR)
-    if uaibot_path not in sys.path:
-        sys.path.insert(0, uaibot_path)
+    if uaibot_path in sys.path:
+        sys.path.remove(uaibot_path)
+    sys.path.insert(0, uaibot_path)
+
+    loaded_cpp = sys.modules.get("uaibot_cpp_bind")
+    loaded_cpp_path = Path(getattr(loaded_cpp, "__file__", "")).resolve() if loaded_cpp else None
+    if loaded_cpp_path is None or loaded_cpp_path.parent != UAIBOT_DIR.resolve():
+        sys.modules.pop("uaibot_cpp_bind", None)
 
     os.environ["CPP_SO_FOUND"] = "1"
 

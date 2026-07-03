@@ -3,10 +3,11 @@ import os
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+EXPERIMENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = EXPERIMENT_DIR.parents[1]
 LOCAL_UAIBOTPY = PROJECT_ROOT / "UAIbotPy"
 
-project_root_str = str(PROJECT_ROOT)
+experiment_dir_str = str(EXPERIMENT_DIR)
 local_uaibotpy_str = str(LOCAL_UAIBOTPY)
 
 if local_uaibotpy_str not in sys.path:
@@ -15,12 +16,12 @@ if local_uaibotpy_str not in sys.path:
 import uaibot as ub
 
 # Depois de carregar o UAIBot local, devolvemos o experimento ao topo.
-# Assim, "from setup import *" usa ./setup.py, nao UAIbotPy/setup.py.
+# Assim, "from setup import *" usa experiments/rrt_se3/setup.py.
 if local_uaibotpy_str in sys.path:
     sys.path.remove(local_uaibotpy_str)
-if project_root_str in sys.path:
-    sys.path.remove(project_root_str)
-sys.path.insert(0, project_root_str)
+if experiment_dir_str in sys.path:
+    sys.path.remove(experiment_dir_str)
+sys.path.insert(0, experiment_dir_str)
 
 from scipy.linalg import expm
 
@@ -279,7 +280,7 @@ sim.add(all_obs)
 # Caminho planejado com RRT e alvo
 # ============================================================
 
-htm_ref = carregar_htm("caminho.txt")
+htm_ref = carregar_htm("data/caminho.txt")
 htm_target = np.matrix(htm_ref[-1])
 
 robot_collision_model = [robot_body]
@@ -303,16 +304,16 @@ draw_pc(path=htm_path, sim=sim, color="white", radius=0.018)
 # Parametros do vector field
 # ============================================================
 
-dt = 0.005
+dt = 0.01
 dt_num = 0.085
 t_max = 80.0
 
-kt1 = 9.3
-kt2 = 0.4
-kt3 = 1.0
+kt1 = 9
+kt2 = 1
+kt3 = 1
 
-kn1 = 0.2
-kn2 = 0.13
+kn1 = 1
+kn2 = 1
 
 lambdaa = 15.0
 
@@ -383,6 +384,6 @@ SAVE_ANIMATION = True
 
 if SAVE_ANIMATION:
     sim.save(
-        address="/home/pedro/Projects/TP_final_planejamento",
+        address=str(PROJECT_ROOT / "outputs"),
         file_name="se3_vectorfield_only",
     )

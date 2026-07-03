@@ -11,7 +11,7 @@ How to compile the UAIBot pybind module into the uaibot package folder:
 
 Then run this file from the project root:
 
-    PYTHONPATH="$PWD/UAIbotPy:$PWD/UAIbotPy/uaibot:$PWD/src" python3 test_uaibot_se3_cpp.py
+    python3 examples/se3_cpp_smoke.py
 
 Alternative direct CMake build without copying the module into uaibot:
 
@@ -30,12 +30,12 @@ import sys
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SEARCH_PATHS = [
-    ROOT / "UAIbotPy" / "uaibot",
-    ROOT / "UAIbotPy" / "uaibot" / "c_implementation" / "build",
-    ROOT / "UAIbotPy",
-    ROOT / "src",
+    PROJECT_ROOT / "UAIbotPy" / "uaibot",
+    PROJECT_ROOT / "UAIbotPy" / "uaibot" / "c_implementation" / "build",
+    PROJECT_ROOT / "UAIbotPy",
+    PROJECT_ROOT / "src",
 ]
 
 for path in reversed(SEARCH_PATHS):
