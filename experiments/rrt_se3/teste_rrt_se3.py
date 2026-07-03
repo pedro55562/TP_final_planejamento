@@ -385,8 +385,8 @@ def main():
     path_followed = []
     error_list = []
 
-    ball_tr = ub.Ball(htm=np.identity(4), radius=0.025, color="cyan")
-    sim.add([ball_tr])
+    #ball_tr = ub.Ball(htm=np.identity(4), radius=0.025, color="cyan")
+    #sim.add([ball_tr])
 
     for k in range(int(t_max / dt)):
         t = k * dt
@@ -416,7 +416,7 @@ def main():
         H = propagate_htm(H, xid, dt)
 
         robot_UAV.add_ani_frame(time=t, htm=H)
-        ball_tr.add_ani_frame(time=t, htm=htm_path[idx])
+        #ball_tr.add_ani_frame(time=t, htm=htm_path[idx])
 
         path_followed.append(H.copy())
 
@@ -425,7 +425,7 @@ def main():
     # ============================================================
 
     if len(path_followed) > 0:
-        draw_pc(path=path_followed, sim=sim, color="magenta", radius=0.012)
+        # draw_pc(path=path_followed, sim=sim, color="magenta", radius=0.012)
         print("Erro final:", error_list[-1])
 
     SAVE_ANIMATION = True
