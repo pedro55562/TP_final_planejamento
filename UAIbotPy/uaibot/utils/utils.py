@@ -16,6 +16,30 @@ if os.environ['CPP_SO_FOUND']=="1":
     import uaibot_cpp_bind as ub_cpp
 
     
+class RigidBodyCollisionResult:
+    """Friendly Python result returned by Utils.check_rigid_body_collision."""
+
+    def __init__(self, cpp_result):
+        self.is_free = bool(cpp_result.is_free)
+        self.message = cpp_result.message
+        self.min_distance = float(cpp_result.min_distance)
+        self.type = int(cpp_result.type)
+        self.robot_object_index = int(cpp_result.robot_object_index)
+        self.obstacle_index = int(cpp_result.obstacle_index)
+        self.info = list(cpp_result.info)
+
+    def __repr__(self):
+        return (
+            "RigidBodyCollisionResult("
+            f"is_free={self.is_free}, "
+            f"message={self.message!r}, "
+            f"min_distance={self.min_distance}, "
+            f"type={self.type}, "
+            f"robot_object_index={self.robot_object_index}, "
+            f"obstacle_index={self.obstacle_index}, "
+            f"info={self.info})"
+        )
+
 
 class Utils:
     """A library that contains some utilities for UAIbot. All of the functions are static."""
@@ -26,7 +50,7 @@ class Utils:
 
     UAIBOT_NAME_TYPES = ['uaibot.', 'cylinder.', 'box.', 'ball.', 'convexpolytope.', 'robot.', 'simulation.', 'meshmaterial.', 'mtlmeshmaterial.',
                              'glbmeshmaterial.', 'texture.', 'pointlight.', 'frame.', 'model3d.', 'links.', 'pointcloud.', 'arrow.', 'rigidobject.',
-                             '.group', '.htmldiv', 'CPP_GeometricPrimitives', 'CPP_DistStructRobotObj','CPP_AABB']
+                             '.group', '.htmldiv', 'CPP_GeometricPrimitives', 'CPP_DistStructRobotObj','CPP_AABB', 'CPP_CollisionOracleResult']
 
     IS_SIMPLE = ['uaibot.Ball', 'uaibot.Box', 'uaibot.Cylinder', 'uaibot.ConvexPolytope']
     
@@ -1110,6 +1134,68 @@ class Utils:
                 A = obj.A * Q.transpose()
                 b = obj.b + obj.A * Q.transpose()*p
                 return ub_cpp.CPP_GeometricPrimitives.create_convexpolytope(htm, A, b)
+
+    @staticmethod
+    def _collision_object_to_cpp(obj):
+        obj_type = Utils.get_uaibot_type(obj)
+
+        if obj_type == 'uaibot.CPP_GeometricPrimitives':
+            return obj
+
+        if Utils.is_a_metric_object(obj):
+            if hasattr(obj, "cpp_obj"):
+                return obj.cpp_obj
+            return Utils.obj_to_cpp(obj)
+
+        raise Exception(
+            "Collision objects must be UAIBot metric objects "
+            "(Ball, Box, Cylinder, PointCloud, ConvexPolytope) or CPP_GeometricPrimitives."
+        )
+
+    @staticmethod
+    def check_rigid_body_collision(robot_model, htm, obstacles, tol=1e-4, dist_tol=1e-3, no_iter_max=20):
+        """
+        Check collisions for a rigid body in SE(3).
+
+        The rigid body is represented by geometric primitives expressed in the
+        robot local frame. The pose ``htm`` places the whole rigid body in the
+        world. Obstacles are fixed in the world.
+        """
+
+        if os.environ['CPP_SO_FOUND'] == '0':
+            raise Exception("The C++ .so file was not loaded.")
+
+        if not isinstance(robot_model, (list, tuple)):
+            robot_model = [robot_model]
+
+        if not isinstance(obstacles, (list, tuple)):
+            obstacles = [obstacles]
+
+        if not Utils.is_a_matrix(htm, 4, 4):
+            raise Exception("The parameter 'htm' must be a 4x4 homogeneous transformation matrix.")
+
+        if not Utils.is_a_number(tol) or tol <= 0:
+            raise Exception("The parameter 'tol' must be a positive number.")
+
+        if not Utils.is_a_number(dist_tol) or dist_tol < 0:
+            raise Exception("The parameter 'dist_tol' must be a nonnegative number.")
+
+        if not Utils.is_a_natural_number(no_iter_max):
+            raise Exception("The parameter 'no_iter_max' must be a nonnegative integer.")
+
+        robot_model_cpp = [Utils._collision_object_to_cpp(obj) for obj in robot_model]
+        obstacles_cpp = [Utils._collision_object_to_cpp(obj) for obj in obstacles]
+
+        cpp_result = ub_cpp.check_rigid_body_collision(
+            robot_model_cpp,
+            np.matrix(htm, dtype=np.float32),
+            obstacles_cpp,
+            float(tol),
+            float(dist_tol),
+            int(no_iter_max),
+        )
+
+        return RigidBodyCollisionResult(cpp_result)
                 
     #######################################
     # Distance computation functions
@@ -1320,7 +1406,6 @@ class Utils:
         else:
             dist_res = obj_a_cpp.dist_to(obj_b_cpp, h, eps, tol, no_iter_max, p_a)
             return Utils.cvt(dist_res.proj_A), Utils.cvt(dist_res.proj_B), dist_res.dist, dist_res.hist_error
-
 
 
 

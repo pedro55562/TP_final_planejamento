@@ -24,6 +24,8 @@
 #include <Eigen/Dense>
 
 #include "declarations.h"
+#include "rigid_body_collision.hpp"
+#include "se3_bindings.hpp"
 
 using namespace std;
 using namespace std::chrono;
@@ -94,6 +96,15 @@ PYBIND11_MODULE(uaibot_cpp_bind, m) {
          .def_readonly("isfree", &CheckFreeConfigResult::isfree)
          .def_readonly("message", &CheckFreeConfigResult::message)
          .def_readonly("info", &CheckFreeConfigResult::info);
+
+     py::class_<CollisionOracleResult>(m, "CPP_CollisionOracleResult")
+         .def_readonly("is_free", &CollisionOracleResult::is_free)
+         .def_readonly("message", &CollisionOracleResult::message)
+         .def_readonly("min_distance", &CollisionOracleResult::min_distance)
+         .def_readonly("type", &CollisionOracleResult::type)
+         .def_readonly("robot_object_index", &CollisionOracleResult::robot_object_index)
+         .def_readonly("obstacle_index", &CollisionOracleResult::obstacle_index)
+         .def_readonly("info", &CollisionOracleResult::info);
 
      py::class_<VectorFieldResult>(m, "CPP_VectorFieldResult")
          .def_readonly("dist", &VectorFieldResult::dist)
@@ -229,4 +240,13 @@ PYBIND11_MODULE(uaibot_cpp_bind, m) {
      m.def("vectorfield_SE3", &vectorfield_SE3, py::arg("state"), py::arg("curve"), py::arg("kt1"), py::arg("kt2"),
            py::arg("kt3"), py::arg("kn1"), py::arg("kn2"), py::arg("curve_derivative")=std::vector<Eigen::MatrixXd>(),
            py::arg("delta") = c_delta, py::arg("ds")=c_ds);
+
+     m.def("transform_robot_model_to_world", &transform_robot_model_to_world,
+           py::arg("robot_model"), py::arg("H_robot"));
+
+     m.def("check_rigid_body_collision", &check_rigid_body_collision,
+           py::arg("robot_model"), py::arg("H_robot"), py::arg("obstacles"),
+           py::arg("tol"), py::arg("dist_tol"), py::arg("no_iter_max"));
+
+     bind_se3_utilities(m);
 }

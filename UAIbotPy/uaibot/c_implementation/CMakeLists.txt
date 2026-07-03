@@ -53,6 +53,9 @@ set(SOURCES
     pybind_main.cpp   
     manipulator.cpp  
     utils.cpp  
+    src/se3_utilities.cpp
+    bindings/se3_bindings.cpp
+    src/rigid_body_collision.cpp
     declarations.h  
     gjk.c         
     gjk.h
@@ -70,8 +73,12 @@ target_link_libraries(uaibot_cpp_bind PRIVATE
     pybind11::windows_extras  # Windows-specific optimizations
 )
 
-target_include_directories(uaibot_cpp_bind PRIVATE ${EIGEN3_INCLUDE_DIR})
+target_include_directories(uaibot_cpp_bind PRIVATE
+    ${EIGEN3_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 target_link_libraries(uaibot_cpp_bind PRIVATE nanoflann)
+
 # Windows-specific linking
 if(WIN32)
     target_link_libraries(uaibot_cpp_bind PRIVATE ${Python3_LIBRARIES})
